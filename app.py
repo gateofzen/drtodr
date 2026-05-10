@@ -185,7 +185,7 @@ def render_drtodr(header, cases, sheet_no=1):
         if case.get("dept"):
             d.text((920, y1-15), case["dept"], font=f22, fill="black")
         if case.get("doctor"):
-            d.text((1300, y1-4), case["doctor"], font=f22, fill="black")
+            d.text((1040, y1-15), case["doctor"], font=f22, fill="black")
 
         # --- 2行目: 症例（年齢・性別）---
         y2 = b + 40
