@@ -1,0 +1,8 @@
+streamlit
+opencv-python-headless
+numpy
+Pillow
+pyzbar
+reportlab
+streamlit-paste-button
+pdfplumber
