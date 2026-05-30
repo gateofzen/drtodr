@@ -305,73 +305,81 @@ st.markdown(f"**📞 登録済み: {n}件（日勤 {len(nisshin)}件 / 夜勤 {l
 
 # ===== 症例登録フォーム =====
 st.divider()
-st.subheader("➕ 症例登録")
+if "dtd_show_form" not in st.session_state:
+    st.session_state.dtd_show_form = False
 
-from datetime import timezone as _tz, timedelta as _td
-_jst_now = datetime.now(_tz(_td(hours=9)))
-cc1, cc2 = st.columns(2)
-with cc1:
-    _rounded = f"{_jst_now.hour:02d}:{(_jst_now.minute // 5) * 5:02d}"
-    _nearest_idx = TIME_OPTIONS.index(_rounded) if _rounded in TIME_OPTIONS else 0
-    sel_time = st.selectbox("時刻", TIME_OPTIONS, index=_nearest_idx, key="dtd_inp_time")
-    if sel_time:
-        st.caption(f"→ **{time_to_shift(sel_time)}**")
-    req_count = st.selectbox("依頼回数", ["初回","2回目","3回目","4回目以上"], key="dtd_req")
-with cc2:
-    hospital = st.text_input("依頼元病院", placeholder="○○病院", key="dtd_hospital")
-    dept     = st.text_input("科", placeholder="循環器内科", key="dtd_dept")
-    doctor   = st.text_input("医師名", placeholder="山田先生", key="dtd_doctor")
+if not st.session_state.dtd_show_form:
+    if st.button("➕ 症例を登録する", type="primary", use_container_width=True):
+        st.session_state.dtd_show_form = True
+        st.rerun()
+else:
+    st.subheader("➕ 症例登録")
+    from datetime import timezone as _tz, timedelta as _td
+    _jst_now = datetime.now(_tz(_td(hours=9)))
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        _rounded = f"{_jst_now.hour:02d}:{(_jst_now.minute // 5) * 5:02d}"
+        _nearest_idx = TIME_OPTIONS.index(_rounded) if _rounded in TIME_OPTIONS else 0
+        sel_time = st.selectbox("時刻", TIME_OPTIONS, index=_nearest_idx, key="dtd_inp_time")
+        if sel_time:
+            st.caption(f"→ **{time_to_shift(sel_time)}**")
+        req_count = st.selectbox("依頼回数", ["初回","2回目","3回目","4回目以上"], key="dtd_req")
+    with cc2:
+        hospital = st.text_input("依頼元病院", placeholder="○○病院", key="dtd_hospital")
+        dept     = st.text_input("科", placeholder="循環器内科", key="dtd_dept")
+        doctor   = st.text_input("医師名", placeholder="山田先生", key="dtd_doctor")
 
-age    = st.number_input("年齢（才）", min_value=0, max_value=120, value=0, step=1, key="dtd_age")
-gender = st.radio("性別", ["M","F","不明"], horizontal=True, key="dtd_gender")
-summary = st.text_area("概略", height=60, placeholder="主訴・病態など", key="dtd_summary")
+    age    = st.number_input("年齢（才）", min_value=0, max_value=120, value=0, step=1, key="dtd_age")
+    gender = st.radio("性別", ["M","F","不明"], horizontal=True, key="dtd_gender")
+    summary = st.text_area("概略", height=60, placeholder="主訴・病態など", key="dtd_summary")
 
-# 転帰
-outcome = st.radio("転帰", ["搬入","お断り","院内他科案内","患者都合","その他"],
-                   horizontal=True, key="dtd_outcome")
+    outcome = st.radio("転帰", ["搬入","お断り","院内他科案内","患者都合","その他"],
+                       horizontal=True, key="dtd_outcome")
 
-reason = reason1_sub = reason2_sub = reason3_sub = reason3_dept = ""
-if outcome == "お断り":
-    reason_sel = st.radio("お断り理由", [
-        "1. 病床の都合がつかない",
-        "2. マンパワーの問題",
-        "3. 院内専門科の都合・体制",
-    ], key="dtd_reason")
+    reason = reason1_sub = reason2_sub = reason3_sub = reason3_dept = ""
+    if outcome == "お断り":
+        reason_sel = st.radio("お断り理由", [
+            "1. 病床の都合がつかない",
+            "2. マンパワーの問題",
+            "3. 院内専門科の都合・体制",
+        ], key="dtd_reason")
+        if reason_sel.startswith("1."):
+            reason = "1_満床"
+            reason1_sub = st.radio("詳細", [
+                "満床・満床に準ずる状態", "ICU個室(感染等)満床", "熱傷患者受入不能",
+            ], horizontal=True, key="dtd_r1sub")
+        elif reason_sel.startswith("2."):
+            reason = "2_マンパワー"
+            reason2_sub = st.radio("詳細", [
+                "他患の処置・手術等で余力なし", "別の救急患者の搬入直前・直後",
+            ], horizontal=True, key="dtd_r2sub")
+        elif reason_sel.startswith("3."):
+            reason = "3_院内専門科"
+            reason3_dept = st.text_input("診療科名", placeholder="脳神経外科", key="dtd_r3dept")
+            reason3_sub = st.radio("詳細", [
+                "当該科手術中", "学会等で不在", "麻酔科対応不能",
+            ], horizontal=True, key="dtd_r3sub")
 
-    if reason_sel.startswith("1."):
-        reason = "1_満床"
-        reason1_sub = st.radio("詳細", [
-            "満床・満床に準ずる状態",
-            "ICU個室(感染等)満床",
-            "熱傷患者受入不能",
-        ], horizontal=True, key="dtd_r1sub")
-    elif reason_sel.startswith("2."):
-        reason = "2_マンパワー"
-        reason2_sub = st.radio("詳細", [
-            "他患の処置・手術等で余力なし",
-            "別の救急患者の搬入直前・直後",
-        ], horizontal=True, key="dtd_r2sub")
-    elif reason_sel.startswith("3."):
-        reason = "3_院内専門科"
-        reason3_dept = st.text_input("診療科名", placeholder="脳神経外科", key="dtd_r3dept")
-        reason3_sub = st.radio("詳細", [
-            "当該科手術中", "学会等で不在", "麻酔科対応不能",
-        ], horizontal=True, key="dtd_r3sub")
-
-if st.button("💾 症例を追加", type="primary", use_container_width=True):
-    case = {
-        "time": sel_time, "req_count": req_count,
-        "hospital": hospital, "dept": dept, "doctor": doctor,
-        "age": age if age > 0 else "", "gender": gender,
-        "summary": summary, "outcome": outcome,
-        "reason": reason, "reason1_sub": reason1_sub,
-        "reason2_sub": reason2_sub, "reason3_sub": reason3_sub,
-        "reason3_dept": reason3_dept,
-    }
-    st.session_state.dtd_cases.append(case)
-    save_cases(st.session_state.dtd_cases)
-    st.success(f"✅ 追加しました（合計{len(st.session_state.dtd_cases)}件）")
-    st.rerun()
+    bc1, bc2 = st.columns(2)
+    with bc1:
+        if st.button("💾 症例を追加", type="primary", use_container_width=True):
+            case = {
+                "time": sel_time, "req_count": req_count,
+                "hospital": hospital, "dept": dept, "doctor": doctor,
+                "age": age if age > 0 else "", "gender": gender,
+                "summary": summary, "outcome": outcome,
+                "reason": reason, "reason1_sub": reason1_sub,
+                "reason2_sub": reason2_sub, "reason3_sub": reason3_sub,
+                "reason3_dept": reason3_dept,
+            }
+            st.session_state.dtd_cases.append(case)
+            save_cases(st.session_state.dtd_cases)
+            st.session_state.dtd_show_form = False
+            st.rerun()
+    with bc2:
+        if st.button("❌ キャンセル", use_container_width=True, key="dtd_cancel"):
+            st.session_state.dtd_show_form = False
+            st.rerun()
 
 # ===== 登録済み症例リスト =====
 if cases:
