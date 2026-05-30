@@ -198,17 +198,18 @@ def render_drtodr(header, cases, sheet_no=1):
 
         # --- 概略（自由記載）---
         y3 = b + 80
+        f16s = get_font(15)  # 概略用の小さいフォント
         summary = case.get("summary", "")
         if summary:
             lines = []
             line = ""
             for ch in summary:
                 line += ch
-                if len(line) >= 35:
+                if len(line) >= 45:
                     lines.append(line); line = ""
             if line: lines.append(line)
-            for li, ln in enumerate(lines[:2]):
-                d.text((150, y3-21 + li*26), ln, font=f22, fill="black")
+            for li, ln in enumerate(lines[:3]):
+                d.text((150, y3-21 + li*20), ln, font=f16s, fill="black")
 
         # --- 転帰行 ---
         y4 = b + 148
