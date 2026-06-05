@@ -382,6 +382,9 @@ else:
             st.rerun()
 
 # ===== 登録済み症例リスト =====
+if "dtd_editing" not in st.session_state:
+    st.session_state.dtd_editing = None
+
 if cases:
     st.divider()
     st.subheader("📋 登録済み症例")
@@ -391,17 +394,92 @@ if cases:
         oc = c.get("outcome","")
         shift = time_to_shift(t)
         icon = "🌕" if shift=="日勤" else "🌑"
-        col1, col2 = st.columns([7,1])
+        col1, col2, col3 = st.columns([6,1,1])
         with col1:
             st.markdown(
                 f"<div style='font-size:14px;padding:2px 0'>"
                 f"{icon} {idx+1}. {t} {hosp} {c.get('dept','')} 転帰:{oc}</div>",
                 unsafe_allow_html=True)
         with col2:
-            if st.button("🗑️", key=f"dtd_del_{idx}"):
+            if st.button("✏️", key=f"dtd_edit_{idx}", help="編集"):
+                st.session_state.dtd_editing = idx
+                st.session_state.dtd_show_form = False
+                st.rerun()
+        with col3:
+            if st.button("🗑️", key=f"dtd_del_{idx}", help="削除"):
                 st.session_state.dtd_cases.pop(idx)
                 save_cases(st.session_state.dtd_cases)
+                if st.session_state.dtd_editing == idx:
+                    st.session_state.dtd_editing = None
                 st.rerun()
+
+# ===== 編集フォーム =====
+edit_idx = st.session_state.dtd_editing
+if edit_idx is not None and 0 <= edit_idx < len(cases):
+    st.divider()
+    st.subheader(f"✏️ 症例 {edit_idx+1} を編集")
+    ec = cases[edit_idx]
+    ecc1, ecc2 = st.columns(2)
+    with ecc1:
+        e_time = st.selectbox("時刻", TIME_OPTIONS,
+            index=TIME_OPTIONS.index(ec.get("time","")) if ec.get("time","") in TIME_OPTIONS else 0,
+            key="dtd_e_time")
+        e_req = st.selectbox("依頼回数", ["初回","2回目","3回目","4回目以上"],
+            index=["初回","2回目","3回目","4回目以上"].index(ec.get("req_count","初回")) if ec.get("req_count","初回") in ["初回","2回目","3回目","4回目以上"] else 0,
+            key="dtd_e_req")
+    with ecc2:
+        e_hospital = st.text_input("依頼元病院", value=ec.get("hospital",""), key="dtd_e_hospital")
+        e_dept     = st.text_input("科", value=ec.get("dept",""), key="dtd_e_dept")
+        e_doctor   = st.text_input("医師名", value=ec.get("doctor",""), key="dtd_e_doctor")
+    e_age    = st.number_input("年齢（才）", min_value=0, max_value=120,
+                               value=int(ec.get("age",0)) if ec.get("age","") != "" else 0,
+                               step=1, key="dtd_e_age")
+    e_gender = st.radio("性別", ["M","F","不明"],
+                        index=["M","F","不明"].index(ec.get("gender","M")) if ec.get("gender","M") in ["M","F","不明"] else 0,
+                        horizontal=True, key="dtd_e_gender")
+    e_summary = st.text_area("概略", value=ec.get("summary",""), height=60, key="dtd_e_summary")
+    e_outcome = st.radio("転帰", ["搬入","お断り","院内他科案内","患者都合","その他"],
+                         index=["搬入","お断り","院内他科案内","患者都合","その他"].index(ec.get("outcome","搬入")) if ec.get("outcome","搬入") in ["搬入","お断り","院内他科案内","患者都合","その他"] else 0,
+                         horizontal=True, key="dtd_e_outcome")
+    e_reason = e_reason1_sub = e_reason2_sub = e_reason3_sub = e_reason3_dept = ""
+    if e_outcome == "お断り":
+        e_reason_opts = ["1. 病床の都合がつかない","2. マンパワーの問題","3. 院内専門科の都合・体制"]
+        cur_r = ec.get("reason","")
+        cur_r_sel = e_reason_opts[0] if cur_r=="1_満床" else e_reason_opts[1] if cur_r=="2_マンパワー" else e_reason_opts[2] if cur_r=="3_院内専門科" else e_reason_opts[0]
+        e_reason_sel = st.radio("お断り理由", e_reason_opts,
+                                index=e_reason_opts.index(cur_r_sel), key="dtd_e_reason")
+        if e_reason_sel.startswith("1."):
+            e_reason = "1_満床"
+            e_reason1_sub = st.radio("詳細",["満床・満床に準ずる状態","ICU個室(感染等)満床","熱傷患者受入不能"],
+                                     horizontal=True, key="dtd_e_r1sub")
+        elif e_reason_sel.startswith("2."):
+            e_reason = "2_マンパワー"
+            e_reason2_sub = st.radio("詳細",["他患の処置・手術等で余力なし","別の救急患者の搬入直前・直後"],
+                                     horizontal=True, key="dtd_e_r2sub")
+        elif e_reason_sel.startswith("3."):
+            e_reason = "3_院内専門科"
+            e_reason3_dept = st.text_input("診療科名", value=ec.get("reason3_dept",""), key="dtd_e_r3dept")
+            e_reason3_sub = st.radio("詳細",["当該科手術中","学会等で不在","麻酔科対応不能"],
+                                     horizontal=True, key="dtd_e_r3sub")
+    ebc1, ebc2 = st.columns(2)
+    with ebc1:
+        if st.button("💾 保存", type="primary", use_container_width=True, key="dtd_e_save"):
+            st.session_state.dtd_cases[edit_idx] = {
+                "time": e_time, "req_count": e_req,
+                "hospital": e_hospital, "dept": e_dept, "doctor": e_doctor,
+                "age": e_age if e_age > 0 else "", "gender": e_gender,
+                "summary": e_summary, "outcome": e_outcome,
+                "reason": e_reason, "reason1_sub": e_reason1_sub,
+                "reason2_sub": e_reason2_sub, "reason3_sub": e_reason3_sub,
+                "reason3_dept": e_reason3_dept,
+            }
+            save_cases(st.session_state.dtd_cases)
+            st.session_state.dtd_editing = None
+            st.rerun()
+    with ebc2:
+        if st.button("❌ キャンセル", use_container_width=True, key="dtd_e_cancel"):
+            st.session_state.dtd_editing = None
+            st.rerun()
 
 # ===== 出力 =====
 st.divider()
@@ -412,8 +490,11 @@ with oc1:
         all_images = []
 
         for shift_label, shift_cases in [("日勤", nisshin), ("夜勤", yashin)]:
+            # 各シフトのリーダーをスケジュールから正しく取得
+            _sched_leader = get_leader(input_date, shift_label)
+            _shift_leader = _sched_leader if _sched_leader else leader
             header_for_render = {"date": input_date.isoformat(),
-                                 "shift": shift_label, "leader": leader}
+                                 "shift": shift_label, "leader": _shift_leader}
             if not shift_cases:
                 st.write(f"### 📄 {shift_label}（0件）")
                 with st.spinner(f"{shift_label} 依頼なしシート生成中..."):
