@@ -24,9 +24,78 @@ def get_font(size):
     return ImageFont.load_default()
 
 # ===== ファイル永続化 =====
+
+def _gh_config(repo_secret="RECORDS_REPO", default_repo="gateofzen/triage-storage"):
+    """GitHub保存設定をStreamlit Secretsから取得"""
+    try:
+        import streamlit as st
+        token = st.secrets.get("GITHUB_TOKEN", st.secrets.get("SCHEDULE_TOKEN", ""))
+        repo  = st.secrets.get(repo_secret, default_repo)
+        return token, repo
+    except Exception:
+        return "", ""
+
+def _gh_get_sha(token, repo, filename):
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/contents/{filename}",
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/vnd.github.v3+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())["sha"]
+    except Exception:
+        return None
+
+def _gh_push(token, repo, filename, data):
+    if not token: return False
+    try:
+        import urllib.request, base64 as _b64
+        content = _b64.b64encode(
+            json.dumps(data, ensure_ascii=False, indent=2).encode()).decode()
+        sha = _gh_get_sha(token, repo, filename)
+        payload = {"message": f"update {filename}", "content": content}
+        if sha: payload["sha"] = sha
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/contents/{filename}",
+            data=json.dumps(payload).encode(),
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/vnd.github.v3+json",
+                     "Content-Type": "application/json"},
+            method="PUT")
+        with urllib.request.urlopen(req, timeout=15): pass
+        return True
+    except Exception:
+        return False
+
+def _gh_pull(token, repo, filename):
+    if not token: return None
+    try:
+        import urllib.request, base64 as _b64
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/contents/{filename}",
+            headers={"Authorization": f"Bearer {token}",
+                     "Accept": "application/vnd.github.v3+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            raw = json.loads(r.read())
+        return json.loads(_b64.b64decode(raw["content"].replace("\n","")).decode())
+    except Exception:
+        return None
+
 CASES_FILE = "dtd_cases.json"
+_DTD_REPO_SECRET = "RECORDS_REPO"
+_DTD_DEFAULT_REPO = "gateofzen/triage-storage"
 
 def load_cases():
+    token, repo = _gh_config(_DTD_REPO_SECRET, _DTD_DEFAULT_REPO)
+    if token:
+        data = _gh_pull(token, repo, CASES_FILE)
+        if data is not None:
+            try:
+                with open(CASES_FILE, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            except Exception: pass
+            return data
     if os.path.exists(CASES_FILE):
         try:
             with open(CASES_FILE, "r", encoding="utf-8") as f:
@@ -39,6 +108,9 @@ def save_cases(cases):
         with open(CASES_FILE, "w", encoding="utf-8") as f:
             json.dump(cases, f, ensure_ascii=False, indent=2)
     except: pass
+    token, repo = _gh_config(_DTD_REPO_SECRET, _DTD_DEFAULT_REPO)
+    if token: _gh_push(token, repo, CASES_FILE, cases)
+
 
 # ===== 時刻から勤務帯判定 =====
 def time_to_shift(time_str):
