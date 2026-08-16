@@ -561,7 +561,11 @@ st.divider()
 # 生成済み画像を表示（rerun後も永続）
 if st.session_state.get("dtd_shift_images"):
     _stored2 = st.session_state.dtd_shift_images
-    for _sl2 in ["日勤","夜勤"]:
+    from datetime import timezone as _dz2, timedelta as _dtd3
+    _d2_now = __import__('datetime').datetime.now(_dz2(_dtd3(hours=9)))
+    _d2_min = _d2_now.hour * 60 + _d2_now.minute
+    _disp_order2 = ["夜勤","日勤"] if _d2_min >= 18 * 60 else ["日勤","夜勤"]
+    for _sl2 in _disp_order2:
         _imgs2  = _stored2.get(_sl2, [])
         _hdate2 = _stored2.get(f"{_sl2}_date", input_date.isoformat())
         _hldr2  = _stored2.get(f"{_sl2}_leader","")
@@ -606,7 +610,14 @@ with oc1:
         date_str = input_date.strftime('%Y%m%d')
         shift_images2 = {}
 
-        for shift_label, shift_cases in [("日勤", nisshin), ("夜勤", yashin)]:
+        from datetime import timezone as _oz2, timedelta as _otd2
+        _o2_now = __import__('datetime').datetime.now(_oz2(_otd2(hours=9)))
+        _o2_min = _o2_now.hour * 60 + _o2_now.minute
+        if _o2_min >= 18 * 60:
+            _shift_order2 = [("夜勤", yashin), ("日勤", nisshin)]
+        else:
+            _shift_order2 = [("日勤", nisshin), ("夜勤", yashin)]
+        for shift_label, shift_cases in _shift_order2:
             _sched_leader = get_leader(input_date, shift_label)
             _shift_leader = _sched_leader if _sched_leader else leader
             header_for_render = {"date": input_date.isoformat(),
