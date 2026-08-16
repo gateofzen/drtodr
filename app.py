@@ -339,6 +339,8 @@ if "dtd_cases" not in st.session_state:
     st.session_state.dtd_cases = load_cases()
 if "dtd_images" not in st.session_state:
     st.session_state.dtd_images = []
+if "dtd_shift_images" not in st.session_state:
+    st.session_state.dtd_shift_images = {}
 if "dtd_header" not in st.session_state:
     st.session_state.dtd_header = {"date": date.today().isoformat(), "leader": "前川"}
 if "dtd_date_set" not in st.session_state:
@@ -556,17 +558,20 @@ if edit_idx is not None and 0 <= edit_idx < len(cases):
 # ===== 出力 =====
 st.divider()
 
-# 生成済みの印刷ボタンを上部に表示
-if st.session_state.get("dtd_images"):
-    from datetime import timezone as _ptz2, timedelta as _ptd2
-    _p2_jst = __import__('datetime').datetime.now(_ptz2(_ptd2(hours=9)))
-    _p2_nisshin_ldr = get_leader(input_date, "日勤")
-    _p2_night_date = (_p2_jst.date() - __import__('datetime').timedelta(days=1)) if _p2_jst.hour * 60 + _p2_jst.minute < 16*60+30 else _p2_jst.date()
-    _p2_yashin_ldr  = get_leader(_p2_night_date, "夜勤")
-    import base64 as _b64p2
-    _all_b64_2 = [_b64p2.b64encode(ib).decode() for _,ib in st.session_state.dtd_images]
-    _all_json_2 = "[" + ",".join([f'"{p}"' for p in _all_b64_2]) + "]"
-    _phtml2 = f"""<!DOCTYPE html><html><head><style>
+# 生成済み画像を表示（rerun後も永続）
+if st.session_state.get("dtd_shift_images"):
+    _stored2 = st.session_state.dtd_shift_images
+    for _sl2 in ["日勤","夜勤"]:
+        _imgs2  = _stored2.get(_sl2, [])
+        _hdate2 = _stored2.get(f"{_sl2}_date", input_date.isoformat())
+        _hldr2  = _stored2.get(f"{_sl2}_leader","")
+        if _imgs2:
+            import base64 as _b64d
+            _b64_list2 = [_b64d.b64encode(ib).decode() for _, ib in _imgs2]
+            _json2 = "[" + ",".join([f'"{p}"' for p in _b64_list2]) + "]"
+            _hd2 = __import__('datetime').date.fromisoformat(_hdate2)
+            _lbl2 = f"🖨️ {_hd2.month}/{_hd2.day} {_sl2}（{_hldr2}）印刷（{len(_imgs2)}枚）"
+            _html2 = f"""<!DOCTYPE html><html><head><style>
 @page{{size:A4;margin:0}}
 body{{margin:0;padding:0;font-family:sans-serif}}
 @media screen{{
@@ -575,62 +580,58 @@ body{{margin:0;padding:0;font-family:sans-serif}}
   border-radius:4px;font-size:0.875rem;cursor:pointer}}
 .btn:hover{{border-color:#f63366;color:#f63366}}
 @media(prefers-color-scheme:dark){{.btn{{border-color:rgba(250,250,250,0.2);color:#fff}}}}
-.imgs{{display:none}}
-}}
+.imgs{{display:none}}}}
 @media print{{.btn{{display:none}}.imgs{{display:block}}
 .page{{page-break-after:always;width:100%;height:100vh;overflow:hidden}}
 .page:last-child{{page-break-after:avoid}}
-img{{width:100%;height:auto;max-height:100vh;display:block}}
-}}
+img{{width:100%;height:auto;max-height:100vh;display:block}}}}
 </style></head><body>
-<div class="imgs" id="cp2"></div>
-<button class="btn" onclick="window.print()">🖨️ {input_date.month}/{input_date.day} 日勤（{_p2_nisshin_ldr}）・夜勤（{_p2_yashin_ldr}） 全て印刷（{{len(st.session_state.dtd_images)}}枚）</button>
+<div class="imgs" id="cd{_sl2}"></div>
+<button class="btn" onclick="window.print()">{_lbl2}</button>
 <script>
-var pages={_all_json_2};
-var c=document.getElementById('cp2');
+var pages={_json2};
+var c=document.getElementById('cd{_sl2}');
 pages.forEach(function(b64){{var div=document.createElement('div');div.className='page';
 var img=document.createElement('img');img.src='data:image/jpeg;base64,'+b64;
 div.appendChild(img);c.appendChild(div);}});
 </script></body></html>"""
-    components.html(_phtml2, height=46)
+            components.html(_html2, height=46)
+            st.markdown(f"**📄 {_sl2}（{len(_imgs2)}枚）**")
+            for _fn2, _ib2 in _imgs2:
+                st.image(_ib2, use_container_width=True)
 
 oc1, oc2 = st.columns(2)
 with oc1:
     if st.button("🖨️ 受付対応表を生成", type="primary", use_container_width=True):
         date_str = input_date.strftime('%Y%m%d')
-        all_images = []
+        shift_images2 = {}
 
         for shift_label, shift_cases in [("日勤", nisshin), ("夜勤", yashin)]:
-            # 各シフトのリーダーをスケジュールから正しく取得
             _sched_leader = get_leader(input_date, shift_label)
             _shift_leader = _sched_leader if _sched_leader else leader
             header_for_render = {"date": input_date.isoformat(),
                                  "shift": shift_label, "leader": _shift_leader}
+            shift_imgs2 = []
             if not shift_cases:
-                st.write(f"### 📄 {shift_label}（0件）")
                 with st.spinner(f"{shift_label} 依頼なしシート生成中..."):
                     result = render_norequest(header_for_render)
-                st.image(result, use_container_width=True)
                 buf = io.BytesIO(); result.save(buf, format="JPEG", quality=95)
-                all_images.append((f"dtd_{date_str}_{shift_label}_依頼なし.jpg",
-                                   buf.getvalue()))
-                components.html(dtd_make_print_widget(result, f"dtd_print_{shift_label}_none"), height=38)
-                continue
+                shift_imgs2.append((f"dtd_{date_str}_{shift_label}_依頼なし.jpg", buf.getvalue()))
+            else:
+                n_sh = max(1, (len(shift_cases)+5)//6)
+                for sh in range(n_sh):
+                    sheet_cases = shift_cases[sh*6:sh*6+6]
+                    with st.spinner(f"{shift_label} No.{sh+1} 生成中..."):
+                        result = render_drtodr(header_for_render, sheet_cases, sheet_no=sh+1)
+                    buf = io.BytesIO(); result.save(buf, format="JPEG", quality=95)
+                    shift_imgs2.append((f"dtd_{date_str}_{shift_label}_No{sh+1}.jpg", buf.getvalue()))
 
-            st.write(f"### 📄 {shift_label}（{len(shift_cases)}件）")
-            n_sh = max(1, (len(shift_cases)+5)//6)
-            for sh in range(n_sh):
-                sheet_cases = shift_cases[sh*6:sh*6+6]
-                with st.spinner(f"{shift_label} No.{sh+1} 生成中..."):
-                    result = render_drtodr(header_for_render, sheet_cases, sheet_no=sh+1)
-                st.write(f"**{shift_label} No.{sh+1}**（症例{sh*6+1}〜{min(sh*6+len(sheet_cases),len(shift_cases))}）")
-                st.image(result, use_container_width=True)
-                buf = io.BytesIO(); result.save(buf, format="JPEG", quality=95)
-                fname = f"dtd_{date_str}_{shift_label}_No{sh+1}.jpg"
-                all_images.append((fname, buf.getvalue()))
-                components.html(dtd_make_print_widget(result, f"dtd_print_{shift_label}_{sh}"), height=38)
+            shift_images2[shift_label] = shift_imgs2
+            shift_images2[f"{shift_label}_date"] = input_date.isoformat()
+            shift_images2[f"{shift_label}_leader"] = _shift_leader
 
-        st.session_state.dtd_images = all_images
+        st.session_state.dtd_shift_images = shift_images2
+        st.session_state.dtd_images = [(f,b) for sl in ["日勤","夜勤"] for f,b in shift_images2.get(sl,[])]
         st.rerun()
 
     # PDF一括保存
@@ -670,6 +671,7 @@ with oc2:
     if st.button("🗑️ 全症例をリセット", use_container_width=True):
         st.session_state.dtd_cases = []
         st.session_state.dtd_images = []
+        st.session_state.dtd_shift_images = {}
         save_cases([])
         st.rerun()
 
