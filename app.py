@@ -555,6 +555,45 @@ if edit_idx is not None and 0 <= edit_idx < len(cases):
 
 # ===== 出力 =====
 st.divider()
+
+# 生成済みの印刷ボタンを上部に表示
+if st.session_state.get("dtd_images"):
+    from datetime import timezone as _ptz2, timedelta as _ptd2
+    _p2_jst = __import__('datetime').datetime.now(_ptz2(_ptd2(hours=9)))
+    _p2_nisshin_ldr = get_leader(input_date, "日勤")
+    _p2_night_date = (_p2_jst.date() - __import__('datetime').timedelta(days=1)) if _p2_jst.hour * 60 + _p2_jst.minute < 16*60+30 else _p2_jst.date()
+    _p2_yashin_ldr  = get_leader(_p2_night_date, "夜勤")
+    import base64 as _b64p2
+    _all_b64_2 = [_b64p2.b64encode(ib).decode() for _,ib in st.session_state.dtd_images]
+    _all_json_2 = "[" + ",".join([f'"{p}"' for p in _all_b64_2]) + "]"
+    _phtml2 = f"""<!DOCTYPE html><html><head><style>
+@page{{size:A4;margin:0}}
+body{{margin:0;padding:0;font-family:sans-serif}}
+@media screen{{
+.btn{{display:block;width:100%;height:38px;padding:0 14px;box-sizing:border-box;
+  background:transparent;color:inherit;border:1px solid rgba(49,51,63,0.2);
+  border-radius:4px;font-size:0.875rem;cursor:pointer}}
+.btn:hover{{border-color:#f63366;color:#f63366}}
+@media(prefers-color-scheme:dark){{.btn{{border-color:rgba(250,250,250,0.2);color:#fff}}}}
+.imgs{{display:none}}
+}}
+@media print{{.btn{{display:none}}.imgs{{display:block}}
+.page{{page-break-after:always;width:100%;height:100vh;overflow:hidden}}
+.page:last-child{{page-break-after:avoid}}
+img{{width:100%;height:auto;max-height:100vh;display:block}}
+}}
+</style></head><body>
+<div class="imgs" id="cp2"></div>
+<button class="btn" onclick="window.print()">🖨️ {input_date.month}/{input_date.day} 日勤（{_p2_nisshin_ldr}）・夜勤（{_p2_yashin_ldr}） 全て印刷（{{len(st.session_state.dtd_images)}}枚）</button>
+<script>
+var pages={_all_json_2};
+var c=document.getElementById('cp2');
+pages.forEach(function(b64){{var div=document.createElement('div');div.className='page';
+var img=document.createElement('img');img.src='data:image/jpeg;base64,'+b64;
+div.appendChild(img);c.appendChild(div);}});
+</script></body></html>"""
+    components.html(_phtml2, height=46)
+
 oc1, oc2 = st.columns(2)
 with oc1:
     if st.button("🖨️ 受付対応表を生成", type="primary", use_container_width=True):
@@ -592,7 +631,7 @@ with oc1:
                 components.html(dtd_make_print_widget(result, f"dtd_print_{shift_label}_{sh}"), height=38)
 
         st.session_state.dtd_images = all_images
-        st.success(f"✅ {len(all_images)}枚を生成しました。")
+        st.rerun()
 
     # PDF一括保存
     if st.session_state.get("dtd_images"):
