@@ -114,14 +114,105 @@ def save_cases(cases):
 
 # ===== 時刻から勤務帯判定 =====
 def time_to_shift(time_str):
+    """時刻文字列から日勤/夜勤を判定"""
+    if not time_str or ":" not in time_str: return ""
     try:
         h, m = map(int, time_str.split(":"))
-        minutes = h * 60 + m
-        if 8*60+30 <= minutes < 16*60+30:
-            return "日勤"
-        return "夜勤"
+        mins = h*60 + m
+        return "日勤" if 8*60+30 <= mins < 16*60+30 else "夜勤"
     except:
-        return "夜勤"
+        return ""
+
+def get_shift_date(case_date_str, time_str):
+    """症例の時刻が00:00-08:30の場合は前日夜勤扱い"""
+    try:
+        from datetime import date as _d, timedelta
+        h, m = map(int, time_str.split(":"))
+        base = _d.fromisoformat(case_date_str)
+        if h*60+m < 8*60+30:
+            return (base - timedelta(days=1)).isoformat()
+        return case_date_str
+    except:
+        return case_date_str
+
+DTD_TRASH_FILE = "dtd_trash.json"
+
+def load_dtd_trash():
+    token, repo = _gh_config(_DTD_REPO_SECRET, _DTD_DEFAULT_REPO)
+    if token:
+        data = _gh_pull(token, repo, DTD_TRASH_FILE)
+        if data is not None:
+            try:
+                with open(DTD_TRASH_FILE, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            except: pass
+            return data
+    if os.path.exists(DTD_TRASH_FILE):
+        try:
+            with open(DTD_TRASH_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except: return []
+    return []
+
+def save_dtd_trash(trash):
+    try:
+        with open(DTD_TRASH_FILE, "w", encoding="utf-8") as f:
+            json.dump(trash, f, ensure_ascii=False, indent=2)
+    except: pass
+    token, repo = _gh_config(_DTD_REPO_SECRET, _DTD_DEFAULT_REPO)
+    if token: _gh_push(token, repo, DTD_TRASH_FILE, trash)
+
+def move_dtd_to_trash(cases_list):
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    trash = load_dtd_trash()
+    now_str = _dt.now(_tz(_td(hours=9))).isoformat()
+    for c in cases_list:
+        trash.append({"case": c, "deleted_at": now_str})
+    save_dtd_trash(trash)
+
+def purge_dtd_expired_trash():
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    trash = load_dtd_trash()
+    now = _dt.now(_tz(_td(hours=9)))
+    kept = [t for t in trash if (now - _dt.fromisoformat(t["deleted_at"])).total_seconds() < 86400]
+    if len(kept) != len(trash):
+        save_dtd_trash(kept)
+    return kept
+
+def auto_archive_old_shifts_dtd():
+    """現在のシフトと異なる症例を自動的にゴミ箱に移動"""
+    from datetime import date as _dcls, timedelta as _tdcls, datetime as _dtcls, timezone as _tzcls
+    cases = load_cases()
+    if not cases:
+        return
+    _now = _dtcls.now(_tzcls(_tdcls(hours=9)))
+    _now_min = _now.hour * 60 + _now.minute
+    _today = _now.date()
+    if _now_min < 8*60+30:
+        cur_shift_date = (_today - _tdcls(days=1)).isoformat()
+        cur_shift = "夜勤"
+    elif _now_min < 16*60+30:
+        cur_shift_date = _today.isoformat()
+        cur_shift = "日勤"
+    else:
+        cur_shift_date = _today.isoformat()
+        cur_shift = "夜勤"
+    kept = []
+    to_archive = []
+    for c in cases:
+        c_date = c.get("date", "")
+        c_time = c.get("time", "")
+        c_shift = time_to_shift(c_time)
+        c_shift_date = get_shift_date(c_date, c_time) if c_date else ""
+        if c_shift_date == cur_shift_date and c_shift == cur_shift:
+            kept.append(c)
+        elif c_date == "" or c_time == "":
+            kept.append(c)
+        else:
+            to_archive.append(c)
+    if to_archive:
+        move_dtd_to_trash(to_archive)
+        save_cases(kept)
 
 LEADERS  = ["前川","中嶋","森木","小舘","遠藤","提嶋"]
 WEEKDAYS = ["月","火","水","木","金","土","日"]
@@ -337,6 +428,9 @@ def render_drtodr(header, cases, sheet_no=1):
 # ===== セッション初期化 =====
 if "dtd_cases" not in st.session_state:
     st.session_state.dtd_cases = load_cases()
+    purge_dtd_expired_trash()
+    auto_archive_old_shifts_dtd()
+    st.session_state.dtd_cases = load_cases()
 if "dtd_images" not in st.session_state:
     st.session_state.dtd_images = []
 if "dtd_shift_images" not in st.session_state:
@@ -438,6 +532,7 @@ else:
     with bc1:
         if st.button("💾 症例を追加", type="primary", use_container_width=True):
             case = {
+                "date": input_date.isoformat(),
                 "time": sel_time, "req_count": req_count,
                 "hospital": hospital, "dept": dept, "doctor": doctor,
                 "age": age if age > 0 else "", "gender": gender,
@@ -481,6 +576,7 @@ if cases:
                 st.rerun()
         with col3:
             if st.button("🗑️", key=f"dtd_del_{idx}", help="削除"):
+                move_dtd_to_trash([st.session_state.dtd_cases[idx]])
                 st.session_state.dtd_cases.pop(idx)
                 save_cases(st.session_state.dtd_cases)
                 if st.session_state.dtd_editing == idx:
@@ -679,12 +775,55 @@ with oc1:
             st.error(f"PDF生成エラー: {e}")
 
 with oc2:
-    if st.button("🗑️ 全症例をリセット", use_container_width=True):
-        st.session_state.dtd_cases = []
-        st.session_state.dtd_images = []
-        st.session_state.dtd_shift_images = {}
-        save_cases([])
-        st.rerun()
+    if "dtd_confirm_clear" not in st.session_state:
+        st.session_state.dtd_confirm_clear = False
+    if not st.session_state.dtd_confirm_clear:
+        if st.button("🗑️ 全症例をリセット", use_container_width=True):
+            st.session_state.dtd_confirm_clear = True
+            st.rerun()
+    else:
+        st.warning("⚠️ 全症例をゴミ箱に移動します。24時間以内なら復元可能です。")
+        dc1, dc2 = st.columns(2)
+        with dc1:
+            if st.button("✅ ゴミ箱に移動", type="primary", use_container_width=True):
+                move_dtd_to_trash(st.session_state.dtd_cases)
+                st.session_state.dtd_cases = []
+                st.session_state.dtd_images = []
+                st.session_state.dtd_shift_images = {}
+                save_cases([])
+                st.session_state.dtd_confirm_clear = False
+                st.rerun()
+        with dc2:
+            if st.button("❌ キャンセル", use_container_width=True, key="dtd_cancel_clear"):
+                st.session_state.dtd_confirm_clear = False
+                st.rerun()
+
+# ===== ゴミ箱 =====
+_dtd_trash = purge_dtd_expired_trash()
+if _dtd_trash:
+    with st.expander(f"🗑️ ゴミ箱（{len(_dtd_trash)}件・24時間以内なら復元可）", expanded=False):
+        from datetime import datetime as _dtdc, timezone as _tzdc, timedelta as _tddc
+        _now_dtd_t = _dtdc.now(_tzdc(_tddc(hours=9)))
+        for _di, _dt_t in enumerate(_dtd_trash):
+            _dc = _dt_t["case"]
+            _dname = f"{_dc.get('date','')} {_dc.get('time','')} {_dc.get('hospital','')} {_dc.get('summary','')[:15]}"
+            try:
+                _ddel = _dtdc.fromisoformat(_dt_t["deleted_at"])
+                _dremain = 24 - (_now_dtd_t - _ddel).total_seconds() / 3600
+                _dremain_str = f"あと{_dremain:.0f}時間"
+            except: _dremain_str = ""
+            _dcol1, _dcol2 = st.columns([7, 2])
+            with _dcol1:
+                st.markdown(f"<div style='font-size:13px'>{_dname}　<span style='color:#888'>（{_dremain_str}で完全削除）</span></div>", unsafe_allow_html=True)
+            with _dcol2:
+                if st.button("↩️ 復元", key=f"dtd_restore_{_di}", use_container_width=True):
+                    full = load_dtd_trash()
+                    restored = full.pop(_di)
+                    save_dtd_trash(full)
+                    st.session_state.dtd_cases.append(restored["case"])
+                    save_cases(st.session_state.dtd_cases)
+                    st.success("✅ 復元しました")
+                    st.rerun()
 
 # ===== 勤務表リーダー設定 =====
 st.divider()
