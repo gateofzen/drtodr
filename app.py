@@ -202,11 +202,16 @@ def auto_archive_old_shifts_dtd():
     for c in cases:
         c_date = c.get("date", "")
         c_time = c.get("time", "")
+        if not c_date:
+            c_shift = time_to_shift(c_time)
+            if c_shift == cur_shift:
+                kept.append(c)
+            else:
+                to_archive.append(c)
+            continue
         c_shift = time_to_shift(c_time)
-        c_shift_date = get_shift_date(c_date, c_time) if c_date else ""
+        c_shift_date = get_shift_date(c_date, c_time)
         if c_shift_date == cur_shift_date and c_shift == cur_shift:
-            kept.append(c)
-        elif c_date == "" or c_time == "":
             kept.append(c)
         else:
             to_archive.append(c)
