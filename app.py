@@ -180,7 +180,8 @@ def purge_dtd_expired_trash():
     return kept
 
 def auto_archive_old_shifts_dtd():
-    """現在のシフトと異なる症例を自動的にゴミ箱に移動"""
+    """現在のシフトと異なる症例を自動アーカイブ。
+    ただし勤務終了後2時間は直近シフトの症例も保持する。"""
     from datetime import date as _dcls, timedelta as _tdcls, datetime as _dtcls, timezone as _tzcls
     cases = load_cases()
     if not cases:
@@ -188,26 +189,31 @@ def auto_archive_old_shifts_dtd():
     _now = _dtcls.now(_tzcls(_tdcls(hours=9)))
     _now_min = _now.hour * 60 + _now.minute
     _today = _now.date()
+
+    valid_keys = set()
     if _now_min < 8*60+30:
-        cur_shift_date = (_today - _tdcls(days=1)).isoformat()
-        cur_shift = "夜勤"
+        valid_keys.add(((_today - _tdcls(days=1)).isoformat(), "夜勤"))
+    elif _now_min < 10*60+30:
+        valid_keys.add(((_today - _tdcls(days=1)).isoformat(), "夜勤"))
+        valid_keys.add((_today.isoformat(), "日勤"))
     elif _now_min < 16*60+30:
-        cur_shift_date = _today.isoformat()
-        cur_shift = "日勤"
+        valid_keys.add((_today.isoformat(), "日勤"))
+    elif _now_min < 18*60+30:
+        valid_keys.add((_today.isoformat(), "日勤"))
+        valid_keys.add((_today.isoformat(), "夜勤"))
     else:
-        cur_shift_date = _today.isoformat()
-        cur_shift = "夜勤"
-    kept = []
-    to_archive = []
+        valid_keys.add((_today.isoformat(), "夜勤"))
+
+    kept, to_archive = [], []
     for c in cases:
         c_date = c.get("date", "")
         c_time = c.get("time", "")
-        if not c_date:
+        if not c_date or not c_time:
             to_archive.append(c)
             continue
         c_shift = time_to_shift(c_time)
         c_shift_date = get_shift_date(c_date, c_time)
-        if c_shift_date == cur_shift_date and c_shift == cur_shift:
+        if (c_shift_date, c_shift) in valid_keys:
             kept.append(c)
         else:
             to_archive.append(c)
@@ -661,7 +667,7 @@ if st.session_state.get("dtd_shift_images"):
     from datetime import timezone as _dz2, timedelta as _dtd3
     _d2_now = __import__('datetime').datetime.now(_dz2(_dtd3(hours=9)))
     _d2_min = _d2_now.hour * 60 + _d2_now.minute
-    _disp_order2 = ["日勤","夜勤"] if 10 * 60 <= _d2_min < 18 * 60 else ["夜勤","日勤"]
+    _disp_order2 = ["日勤","夜勤"] if 10 * 60 + 30 <= _d2_min < 18 * 60 + 30 else ["夜勤","日勤"]
     for _sl2 in _disp_order2:
         _imgs2  = _stored2.get(_sl2, [])
         _hdate2 = _stored2.get(f"{_sl2}_date", input_date.isoformat())
@@ -710,7 +716,7 @@ with oc1:
         from datetime import timezone as _oz2, timedelta as _otd2
         _o2_now = __import__('datetime').datetime.now(_oz2(_otd2(hours=9)))
         _o2_min = _o2_now.hour * 60 + _o2_now.minute
-        if 10 * 60 <= _o2_min < 18 * 60:
+        if 10 * 60 + 30 <= _o2_min < 18 * 60 + 30:
             _shift_order2 = [("日勤", nisshin), ("夜勤", yashin)]
         else:
             _shift_order2 = [("夜勤", yashin), ("日勤", nisshin)]
