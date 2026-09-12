@@ -472,11 +472,37 @@ with c2:
 
 st.session_state.dtd_header = {"date": input_date.isoformat(), "leader": leader}
 
-# 日勤/夜勤の分類
-nisshin = [c for c in cases if time_to_shift(c.get("time","")) == "日勤"]
-yashin  = [c for c in cases if time_to_shift(c.get("time","")) == "夜勤"]
+# 日勤/夜勤の分類（シフト日ベースでグループ化）
+def _case_shift_key(c):
+    """症例から (シフト日ISO, シフト種別) を返す"""
+    t = c.get("time","")
+    d = c.get("date","")
+    if not t or not d:
+        return None
+    shift = time_to_shift(t)
+    shift_date = get_shift_date(d, t)
+    return (shift_date, shift)
+
+# 全症例をシフト単位でグループ化
+_shift_groups = {}  # {(shift_date, shift): [cases]}
+for c in cases:
+    k = _case_shift_key(c)
+    if k is None:
+        # 日付なしの古い症例は input_date に振り分け
+        _fallback_shift = time_to_shift(c.get("time",""))
+        k = (input_date.isoformat(), _fallback_shift)
+    _shift_groups.setdefault(k, []).append(c)
+
+# 表示用集計
+nisshin_today = [c for c in cases if _case_shift_key(c) == (input_date.isoformat(), "日勤")]
+yashin_today  = [c for c in cases if _case_shift_key(c) == (input_date.isoformat(), "夜勤")]
 n = len(cases)
-st.markdown(f"**📞 登録済み: {n}件（日勤 {len(nisshin)}件 / 夜勤 {len(yashin)}件）**")
+_group_summary = "・".join([f"{k[0][5:]} {k[1]}({len(v)})" for k, v in sorted(_shift_groups.items())])
+st.markdown(f"**📞 登録済み: {n}件** {_group_summary}")
+
+# 互換性のため nisshin/yashin を input_date のものだけとする
+nisshin = nisshin_today
+yashin = yashin_today
 
 # ===== 症例登録フォーム =====
 st.divider()
@@ -566,15 +592,17 @@ if cases:
     st.subheader("📋 登録済み症例")
     for idx, c in enumerate(cases):
         t = c.get("time","--:--")
+        d = c.get("date","")
         hosp = c.get("hospital","")
         oc = c.get("outcome","")
         shift = time_to_shift(t)
         icon = "🌕" if shift=="日勤" else "🌑"
+        d_disp = d[5:].replace("-","/") if d else "?"
         col1, col2, col3 = st.columns([6,1,1])
         with col1:
             st.markdown(
                 f"<div style='font-size:14px;padding:2px 0'>"
-                f"{icon} {idx+1}. {t} {hosp} {c.get('dept','')} 転帰:{oc}</div>",
+                f"{icon} {idx+1}. <b>{d_disp} {t}</b> {hosp} {c.get('dept','')} 転帰:{oc}</div>",
                 unsafe_allow_html=True)
         with col2:
             if st.button("✏️", key=f"dtd_edit_{idx}", help="編集"):
@@ -598,6 +626,12 @@ if edit_idx is not None and 0 <= edit_idx < len(cases):
     ec = cases[edit_idx]
     ecc1, ecc2 = st.columns(2)
     with ecc1:
+        _cur_e_date = ec.get("date", input_date.isoformat())
+        try:
+            _cur_e_date_obj = date.fromisoformat(_cur_e_date)
+        except:
+            _cur_e_date_obj = input_date
+        e_date = st.date_input("日付", value=_cur_e_date_obj, key="dtd_e_date")
         e_time = st.selectbox("時刻", TIME_OPTIONS,
             index=TIME_OPTIONS.index(ec.get("time","")) if ec.get("time","") in TIME_OPTIONS else 0,
             key="dtd_e_time")
@@ -642,6 +676,7 @@ if edit_idx is not None and 0 <= edit_idx < len(cases):
     with ebc1:
         if st.button("💾 保存", type="primary", use_container_width=True, key="dtd_e_save"):
             st.session_state.dtd_cases[edit_idx] = {
+                "date": e_date.isoformat(),
                 "time": e_time, "req_count": e_req,
                 "hospital": e_hospital, "dept": e_dept, "doctor": e_doctor,
                 "age": e_age if e_age > 0 else "", "gender": e_gender,
@@ -661,23 +696,34 @@ if edit_idx is not None and 0 <= edit_idx < len(cases):
 # ===== 出力 =====
 st.divider()
 
-# 生成済み画像を表示（rerun後も永続）
+# 生成済み画像を表示（rerun後も永続、新データ構造対応）
 if st.session_state.get("dtd_shift_images"):
     _stored2 = st.session_state.dtd_shift_images
-    from datetime import timezone as _dz2, timedelta as _dtd3
-    _d2_now = __import__('datetime').datetime.now(_dz2(_dtd3(hours=9)))
-    _d2_min = _d2_now.hour * 60 + _d2_now.minute
-    _disp_order2 = ["日勤","夜勤"] if 10 * 60 + 30 <= _d2_min < 18 * 60 + 30 else ["夜勤","日勤"]
-    for _sl2 in _disp_order2:
-        _imgs2  = _stored2.get(_sl2, [])
-        _hdate2 = _stored2.get(f"{_sl2}_date", input_date.isoformat())
-        _hldr2  = _stored2.get(f"{_sl2}_leader","")
-        if _imgs2:
+    # 新形式（グループキー "date_shift"）を優先
+    _new_groups = {k: v for k, v in _stored2.items() if isinstance(v, dict) and "images" in v}
+    if _new_groups:
+        # 日付・シフト順にソート
+        from datetime import timezone as _dz2, timedelta as _dtd3
+        _d2_now = __import__('datetime').datetime.now(_dz2(_dtd3(hours=9)))
+        _d2_min = _d2_now.hour * 60 + _d2_now.minute
+        _prefer_nisshin = 10 * 60 + 30 <= _d2_min < 18 * 60 + 30
+        def _disp_sort(item):
+            g = item[1]
+            sp = 0 if g["shift"] == ("日勤" if _prefer_nisshin else "夜勤") else 1
+            return (g["date"], sp)
+        for _gkey, _g in sorted(_new_groups.items(), key=_disp_sort):
+            _imgs2 = _g["images"]
+            _hdate2 = _g["date"]
+            _hldr2 = _g["leader"]
+            _sl2 = _g["shift"]
+            if not _imgs2:
+                continue
             import base64 as _b64d
             _b64_list2 = [_b64d.b64encode(ib).decode() for _, ib in _imgs2]
             _json2 = "[" + ",".join([f'"{p}"' for p in _b64_list2]) + "]"
             _hd2 = __import__('datetime').date.fromisoformat(_hdate2)
             _lbl2 = f"🖨️ {_hd2.month}/{_hd2.day} {_sl2}（{_hldr2}）印刷（{len(_imgs2)}枚）"
+            _safe_id = _gkey.replace("-","").replace("_","")
             _html2 = f"""<!DOCTYPE html><html><head><style>
 @page{{size:A4;margin:0}}
 body{{margin:0;padding:0;font-family:sans-serif}}
@@ -693,17 +739,17 @@ body{{margin:0;padding:0;font-family:sans-serif}}
 .page:last-child{{page-break-after:avoid}}
 img{{width:100%;height:auto;max-height:100vh;display:block}}}}
 </style></head><body>
-<div class="imgs" id="cd{_sl2}"></div>
+<div class="imgs" id="cd{_safe_id}"></div>
 <button class="btn" onclick="window.print()">{_lbl2}</button>
 <script>
 var pages={_json2};
-var c=document.getElementById('cd{_sl2}');
+var c=document.getElementById('cd{_safe_id}');
 pages.forEach(function(b64){{var div=document.createElement('div');div.className='page';
 var img=document.createElement('img');img.src='data:image/jpeg;base64,'+b64;
 div.appendChild(img);c.appendChild(div);}});
 </script></body></html>"""
             components.html(_html2, height=46)
-            st.markdown(f"**📄 {_sl2}（{len(_imgs2)}枚）**")
+            st.markdown(f"**📄 {_hd2.month}/{_hd2.day} {_sl2}（{len(_imgs2)}枚）**")
             for _fn2, _ib2 in _imgs2:
                 st.image(_ib2, use_container_width=True)
 
@@ -713,39 +759,58 @@ with oc1:
         date_str = input_date.strftime('%Y%m%d')
         shift_images2 = {}
 
+        # シフトグループを日付順・シフト順にソート
+        # 表示順: 現在時刻に応じて日勤/夜勤の順序を決定
         from datetime import timezone as _oz2, timedelta as _otd2
         _o2_now = __import__('datetime').datetime.now(_oz2(_otd2(hours=9)))
         _o2_min = _o2_now.hour * 60 + _o2_now.minute
-        if 10 * 60 + 30 <= _o2_min < 18 * 60 + 30:
-            _shift_order2 = [("日勤", nisshin), ("夜勤", yashin)]
-        else:
-            _shift_order2 = [("夜勤", yashin), ("日勤", nisshin)]
-        for shift_label, shift_cases in _shift_order2:
-            _sched_leader = get_leader(input_date, shift_label)
+        _prefer_nisshin_first = 10 * 60 + 30 <= _o2_min < 18 * 60 + 30
+
+        def _sort_key(k):
+            shift_date, shift = k
+            shift_priority = 0 if shift == ("日勤" if _prefer_nisshin_first else "夜勤") else 1
+            return (shift_date, shift_priority)
+
+        sorted_groups = sorted(_shift_groups.items(), key=lambda x: _sort_key(x[0]))
+
+        # 症例がない場合でも input_date のシフトを表示するため補完
+        if not sorted_groups:
+            for _sl in (["日勤","夜勤"] if _prefer_nisshin_first else ["夜勤","日勤"]):
+                sorted_groups.append(((input_date.isoformat(), _sl), []))
+
+        for (grp_date, shift_label), shift_cases in sorted_groups:
+            from datetime import date as _hdate_cls
+            _hd = _hdate_cls.fromisoformat(grp_date)
+            _sched_leader = get_leader(_hd, shift_label)
             _shift_leader = _sched_leader if _sched_leader else leader
-            header_for_render = {"date": input_date.isoformat(),
+            header_for_render = {"date": grp_date,
                                  "shift": shift_label, "leader": _shift_leader}
             shift_imgs2 = []
             if not shift_cases:
-                with st.spinner(f"{shift_label} 依頼なしシート生成中..."):
+                with st.spinner(f"{grp_date} {shift_label} 依頼なしシート生成中..."):
                     result = render_norequest(header_for_render)
                 buf = io.BytesIO(); result.save(buf, format="JPEG", quality=95)
-                shift_imgs2.append((f"dtd_{date_str}_{shift_label}_依頼なし.jpg", buf.getvalue()))
+                shift_imgs2.append((f"dtd_{grp_date.replace('-','')}_{shift_label}_依頼なし.jpg", buf.getvalue()))
             else:
                 n_sh = max(1, (len(shift_cases)+5)//6)
                 for sh in range(n_sh):
                     sheet_cases = shift_cases[sh*6:sh*6+6]
-                    with st.spinner(f"{shift_label} No.{sh+1} 生成中..."):
+                    with st.spinner(f"{grp_date} {shift_label} No.{sh+1} 生成中..."):
                         result = render_drtodr(header_for_render, sheet_cases, sheet_no=sh+1)
                     buf = io.BytesIO(); result.save(buf, format="JPEG", quality=95)
-                    shift_imgs2.append((f"dtd_{date_str}_{shift_label}_No{sh+1}.jpg", buf.getvalue()))
+                    shift_imgs2.append((f"dtd_{grp_date.replace('-','')}_{shift_label}_No{sh+1}.jpg", buf.getvalue()))
 
-            shift_images2[shift_label] = shift_imgs2
-            shift_images2[f"{shift_label}_date"] = input_date.isoformat()
-            shift_images2[f"{shift_label}_leader"] = _shift_leader
+            # キーに日付を含めて重複を防ぐ
+            group_key = f"{grp_date}_{shift_label}"
+            shift_images2[group_key] = {
+                "images": shift_imgs2,
+                "date": grp_date,
+                "shift": shift_label,
+                "leader": _shift_leader,
+            }
 
         st.session_state.dtd_shift_images = shift_images2
-        st.session_state.dtd_images = [(f,b) for sl in ["日勤","夜勤"] for f,b in shift_images2.get(sl,[])]
+        st.session_state.dtd_images = [img for g in shift_images2.values() for img in g["images"]]
         st.rerun()
 
     # PDF一括保存
