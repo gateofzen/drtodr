@@ -774,26 +774,17 @@ with oc1:
         sorted_groups = sorted(_shift_groups.items(), key=lambda x: _sort_key(x[0]))
 
         # 現在時刻から「今印刷すべきシフト」を判定
-        # 00:00-08:30 → 前日夜勤
-        # 08:30-10:30 → 前日夜勤 ＋ 当日日勤
-        # 10:30-16:30 → 当日日勤
-        # 16:30-18:30 → 当日日勤 ＋ 当日夜勤
-        # 18:30-翌8:30 → 当日夜勤
+        # 00:00-10:30 → 前日日勤 ＋ 前日夜勤
+        # 10:30-24:00 → 当日日勤
         from datetime import date as _hdcls2, timedelta as _htdcls2
         _today_dtd = _o2_now.date()
+        _yesterday_dtd = _today_dtd - _htdcls2(days=1)
         _valid_shifts2 = set()
-        if _o2_min < 8*60+30:
-            _valid_shifts2.add(((_today_dtd - _htdcls2(days=1)).isoformat(), "夜勤"))
-        elif _o2_min < 10*60+30:
-            _valid_shifts2.add(((_today_dtd - _htdcls2(days=1)).isoformat(), "夜勤"))
-            _valid_shifts2.add((_today_dtd.isoformat(), "日勤"))
-        elif _o2_min < 16*60+30:
-            _valid_shifts2.add((_today_dtd.isoformat(), "日勤"))
-        elif _o2_min < 18*60+30:
-            _valid_shifts2.add((_today_dtd.isoformat(), "日勤"))
-            _valid_shifts2.add((_today_dtd.isoformat(), "夜勤"))
+        if _o2_min < 10*60+30:
+            _valid_shifts2.add((_yesterday_dtd.isoformat(), "日勤"))
+            _valid_shifts2.add((_yesterday_dtd.isoformat(), "夜勤"))
         else:
-            _valid_shifts2.add((_today_dtd.isoformat(), "夜勤"))
+            _valid_shifts2.add((_today_dtd.isoformat(), "日勤"))
 
         # 症例がないシフトも「今印刷すべき」なら補完
         _existing_keys2 = {k for k, _ in sorted_groups}
